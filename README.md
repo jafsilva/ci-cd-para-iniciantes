@@ -208,12 +208,3 @@ Contribuições são bem-vindas! Siga os passos abaixo:
 Este projeto está licenciado sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
 
 ---
-
-## Contato
-
-Se tiver dúvidas ou sugestões, entre em contato:
-
-- **Nome**: [José Aparecido]
-- **GitHub**: [jafsilva](https://github.com/jafsilva)
-
----
