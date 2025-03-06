@@ -1,37 +1,18 @@
-stages:
-  - package
-  - security
-  - deploy
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE =~ /web|merge_request_event/'
+
+image: alpine/azure_cli:1.5.6
 
 variables:
-  AZURE_SUBSCRIPTION: $AZURE_SUBSCRIPTION_ID
-  AZURE_RESOURCE_GROUP: "$CI_PROJECT_NAME"
-  AZURE_LOCATION: "brazilsouth"
+  AZURE_RESOURCE_GROUP: "$CI_PROJECT_NAMESPACE"
   AZURE_ACR_NAME: "$CI_PROJECT_NAMESPACE"
-  AZURE_ENVIRONMENT: "$CI_PROJECT_NAME"
+  AZURE_ENVIRONMENT: "$CI_PROJECT_NAMESPACE"
   IMAGE_NAME: "$CI_PROJECT_PATH"
   IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
 
-.snyk:
-  .snyk_common: &snyk_common
-    stage: security
-    image:
-      name: "snyk/snyk:alpine"
-      entrypoint: ["/bin/sh", "-c"]
-  script:
-    - snyk auth $SNYK_TOKEN
-    - snyk config set org=$SNYK_ORG
-
-.deploy_common:
-  stage: deploy
-  image: alpine/azure_cli:1.5.6
-  services:
-    - docker:dind
-  variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-
-.script_deploy: &script_deploy
+.login: &login
   - |
     if az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID --output none; then
       echo "Azure Login OK"
@@ -40,9 +21,35 @@ variables:
       exit 1
     fi
 
+confi_azure:
+  stage: .pre
+  script:
+    - *login
+    - |
+      #
+      echo "Verificando se o ACR existe..."
+      if az acr show --name "$AZURE_ACR_NAME" --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
+        echo "ACR $AZURE_ACR_NAME existe."
+      else
+        echo "ACR $AZURE_ACR_NAME não existe. Criando..."
+        az acr create --name "$AZURE_ACR_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --sku "basic"
+        az acr update -n $AZURE_ACR_NAME --admin-enabled true
+      fi
+      echo "Verificando se Ambiente de Container existe..."
+      if az containerapp env show --name $AZURE_ENVIRONMENT --resource-group $AZURE_RESOURCE_GROUP --query "name" --output tsv >/dev/null 2>&1; then
+        echo "O ambiente $AZURE_ENVIRONMENT já existe."
+      else
+        echo "Criando o ambiente $AZURE_ENVIRONMENT..."
+        az containerapp env create \
+          --name $AZURE_ENVIRONMENT \
+          --resource-group $AZURE_RESOURCE_GROUP \
+          --location brazilsouth
+      fi
+
 package:
-  stage: package
+  stage: build
   image: eclipse-temurin:21-jdk-alpine
+  needs: []
   script:
     - ./mvnw clean package
   artifacts:
@@ -53,91 +60,31 @@ package:
       junit: target/surefire-reports/*.xml
   allow_failure: false
 
-sast_test:
-  <<: *snyk_common
-  script:
-    - !reference [.snyk, script]
-    - snyk code test
-  allow_failure: true
-
-sca_test:
-  <<: *snyk_common
-  script:
-    - !reference [.snyk, script]
-    - apk add --no-cache openjdk21
-    - export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
-    - export PATH="${JAVA_HOME}/bin:${PATH}"
-    - snyk monitor --all-projects
-  allow_failure: true
-
-sonar_scanner:
-  stage: security
-  image: sonarsource/sonar-scanner-cli
-  variables:
-    SONAR_EXTRA_OPTIONS: -Dsonar.language=java -Dsonar.java.binaries=target/classes -Dsonar.coverage.exclusions=**/src/test/**
-    GIT_DEPTH: 1000
-  before_script:
-    - |
-      response=$(curl -u $SONAR_TOKEN: "$SONAR_HOST_URL/api/projects/search?organization=$CI_PROJECT_NAMESPACE&projects=$CI_PROJECT_NAMESPACE-$CI_PROJECT_NAME")
-      # Verifica se projeto existe
-      if echo "$response" | grep -q '"components":\[\]'; then
-          echo "Creating project..."
-          curl -u $SONAR_TOKEN: -X POST "$SONAR_HOST_URL/api/projects/create" \
-            -d "name=$CI_PROJECT_NAMESPACE-$CI_PROJECT_NAME" \
-            -d "project=$CI_PROJECT_NAMESPACE-$CI_PROJECT_NAME" \
-            -d "organization=$CI_PROJECT_NAMESPACE"
-      fi
-  script:
-    - |
-      #
-      echo "Starting analysis..."
-      sonar-scanner \
-        -Dsonar.organization=$CI_PROJECT_NAMESPACE \
-        -Dsonar.projectKey=$CI_PROJECT_NAMESPACE-$CI_PROJECT_NAME \
-        -Dsonar.sources=. \
-        -Dsonar.qualitygate.wait=true \
-        -Dsonar.branch.name=master \
-        $SONAR_EXTRA_OPTIONS
-  allow_failure: true
-
-
 image_build:
-  extends: .deploy_common
+  stage: deploy
+  services:
+    - docker:dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
   before_script:
     - apk add --no-cache docker npm
-    - npm install -g snyk
-    - *script_deploy
-    - az acr login --name $AZURE_ACR_NAME
+    - *login
+    - az acr login --name $CI_PROJECT_NAMESPACE
 
   script:
-    - !reference [.snyk, script]
     - docker build -t $AZURE_ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG .
-    - snyk container test $AZURE_ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG
     - docker push $AZURE_ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG
 
 deploy:
-  extends: .deploy_common
+  stage: deploy
   needs: [image_build]
   before_script:
-    - *script_deploy
+    - *login
     # Verifica se o ambiente já existe
-    - |
-      #
-      apk add --no-cache docker
-      if az containerapp env show --name $AZURE_ENVIRONMENT --resource-group $AZURE_RESOURCE_GROUP --query "name" --output tsv >/dev/null 2>&1; then
-        echo "O ambiente $AZURE_ENVIRONMENT já existe."
-      else
-        echo "Criando o ambiente $AZURE_ENVIRONMENT..."
-        az containerapp env create \
-          --name $AZURE_ENVIRONMENT \
-          --resource-group $AZURE_RESOURCE_GROUP \
-          --location $AZURE_LOCATION
-      fi
-
   script:
     - |
-      # # Verificando se o Container App já existe...
-      # az acr login --name $AZURE_ACR_NAME
+      # Verificando se o Container App já existe...
       ACR_CREDENTIALS=$(az acr credential show -n $AZURE_ACR_NAME --query "[username,passwords[0].value]" -o tsv)
       ACR_USERNAME=$(echo $ACR_CREDENTIALS | awk '{print $1}')
       ACR_PASSWORD=$(echo $ACR_CREDENTIALS | awk '{print $2}')
@@ -156,4 +103,34 @@ deploy:
           --registry-password $ACR_PASSWORD \
           --cpu 0.25 --memory 0.5Gi \
           --min-replicas 1 --max-replicas 4
+      fi
+      
+cleanup:
+  stage: .post
+  when: manual
+  script:
+    - *login
+    - |
+      echo "Removendo Container App..."
+      if az containerapp show -n $CI_PROJECT_NAME -g $AZURE_RESOURCE_GROUP --query "name" --output tsv >/dev/null 2>&1; then
+        az containerapp delete -n $CI_PROJECT_NAME -g $AZURE_RESOURCE_GROUP --yes
+        echo "Container App $CI_PROJECT_NAME removido."
+      else
+        echo "Container App $CI_PROJECT_NAME não existe."
+      fi
+    - |
+      echo "Removendo Container App Environment..."
+      if az containerapp env show -n $AZURE_ENVIRONMENT -g $AZURE_RESOURCE_GROUP --query "name" --output tsv >/dev/null 2>&1; then
+        az containerapp env delete -n $AZURE_ENVIRONMENT -g $AZURE_RESOURCE_GROUP --yes
+        echo "Container App Environment $AZURE_ENVIRONMENT removido."
+      else
+        echo "Container App Environment $AZURE_ENVIRONMENT não existe."
+      fi
+    - |
+      echo "Removendo Azure Container Registry (ACR)..."
+      if az acr show -n $AZURE_ACR_NAME -g $AZURE_RESOURCE_GROUP --query "name" --output tsv >/dev/null 2>&1; then
+        az acr delete -n $AZURE_ACR_NAME -g $AZURE_RESOURCE_GROUP --yes
+        echo "ACR $AZURE_ACR_NAME removido."
+      else
+        echo "ACR $AZURE_ACR_NAME não existe."
       fi

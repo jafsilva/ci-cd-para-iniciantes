@@ -37,18 +37,16 @@ O objetivo é implantar uma aplicação simples Java Springboot no **Azure Conta
 Antes de começar, certifique-se de ter o seguinte:
 
 1. **Conta no Azure**: [Crie uma conta gratuita](https://azure.microsoft.com/free/).
-2. **Conta Snyk**: [Crie uma conta gratuita](https://app.snyk.io/). "Caso não utilize, remova os Jobs Sast e SCA Snyk"
-3. **Conta Sonar Cloud**: [Crie uma conta gratuita](https://sonarcloud.io/). "Caso não utilize, remova o Job Sonar"
-4. **Configurar Conta Azure** com a criação desses itens.
+2. **Configurar Conta Azure** com a criação desses itens.
    - App registrations
    - Resource Group
    - Container Registry
-5. **GitLab, GitHub e Azure DevOps**:
+3. **GitLab, GitHub e Azure DevOps**:
    - [GitLab](https://gitlab.com/)
    - [GitHub](https://github.com/)
    - [Azure DevOps](https://dev.azure.com/)
-6. **Azure CLI**: Instale a CLI do Azure para gerenciar recursos no Azure. [Guia de instalação](https://docs.microsoft.com/cli/azure/install-azure-cli).
-7. **Conhecimento Básico**:
+4. **Azure CLI**: Instale a CLI do Azure para gerenciar recursos no Azure. [Guia de instalação](https://docs.microsoft.com/cli/azure/install-azure-cli).
+5. **Conhecimento Básico**:
    - Git e repositórios.
    - Conceitos de CI/CD.
    - Contêineres e Docker.
@@ -98,15 +96,8 @@ echo "Subscription ID: $AZURE_SUBSCRIPTION_ID"
 
 Necessário configurar essas variáveis de ambiente diretamente nas ferramentas(**GitLab CI**, **GitHub Actions**, **Azure DevOps**):
 
-#### **Configurar em todas as ferramentas**
-- **SONAR_HOST_URL** - Url Sonarcloud
-- **SONAR_TOKEN** - Token gerado no Sonarcloud
-- **SNYK_ORG** - ID da Org criada no Snyk
-- **SNYK_TOKEN** - Token Gerado no Snyk
-
 #### **GitLab CI**
 - **AZURE_TENANT_ID** - Obtido no script anterior
-- **AZURE_SUBSCRIPTION_ID** - Obtido no script anterior
 - **AZURE_CLIENT_SECRET** - Obtido no script anterior
 - **AZURE_CLIENT_ID** - Obtido no script anterior
 
@@ -140,35 +131,23 @@ O projeto está organizado da seguinte forma:
 O pipeline do GitLab CI está configurado no arquivo `.gitlab-ci.yml`. Ele realiza as seguintes etapas:
 1. **Config_Azure**: Cria o ACR e o Ambiente containers caso necessário.
 2. **Package**: Constrói o pacote java.
-3. **Security**: Executa Sonar, SAST e SCA com Snyk.
-4. **Image_Build**: Cria imagem Docker e envia para o ACR.
-5. **Deploy**: Faz o deploy no Azure Container Apps.
+3. **Image_Build**: Cria imagem Docker e envia para o ACR.
+4. **Deploy**: Faz o deploy no Azure Container Apps.
+5. **Cleanup**: Remove todos os recursos criados manualmente para evitar exclusão acidental.
 
 [Clique aqui para ver o pipeline do GitLab CI](.gitlab-ci.yml).
 
 ---
 
 ### GitHub Actions
-
-O pipeline do GitHub Actions está configurado na pasta `.github/workflows/`. Ele realiza as seguintes etapas:
-1. **Config_Azure**: Cria o ACR e o Ambiente containers caso necessário.
-2. **Package**: Constrói o pacote java.
-3. **Security**: Executa Sonar, SAST e SCA com Snyk.
-4. **Image_Build**: Cria imagem Docker e envia para o ACR.
-5. **Deploy**: Faz o deploy no Azure Container Apps.
+- Laboratório em andamento...
 
 [Clique aqui para ver o pipeline do GitHub Actions](.github/workflows/).
 
 ---
 
 ### Azure DevOps
-
-O pipeline do Azure DevOps está configurado no arquivo `azure-pipelines.yml`. Ele realiza as seguintes etapas:
-1. **Config_Azure**: Cria o ACR e o Ambiente containers caso necessário.
-2. **Package**: Constrói o pacote java.
-3. **Security**: Executa Sonar, SAST e SCA com Snyk.
-4. **Image_Build**: Cria imagem Docker e envia para o ACR.
-5. **Deploy**: Faz o deploy no Azure Container Apps.
+- Laboratório em andamento...
 
 [Clique aqui para ver o pipeline do Azure DevOps](azure-pipelines.yml).
 
