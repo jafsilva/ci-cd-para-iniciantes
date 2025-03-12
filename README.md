@@ -102,7 +102,15 @@ Necessário configurar essas variáveis de ambiente diretamente nas ferramentas(
 - **AZURE_CLIENT_ID** - Obtido no script anterior
 
 #### **GitHub Actions**
-- Laboratório em andamento...
+- **AZURE_CREDENTIALS** - Nela adicionar os valores gerados no script
+```json
+{
+      "clientId": "<Client ID>",
+      "clientSecret": "<Client Secret>",
+      "subscriptionId": "<Subscription ID>",
+      "tenantId": "<Tenant ID>"
+}
+```
 
 #### **Azure DevOps**
 - Laboratório em andamento...
@@ -142,7 +150,12 @@ O pipeline do GitLab CI está configurado no arquivo `.gitlab-ci.yml`. Ele reali
 ### GitHub Actions
 - Laboratório em andamento...
 
-[Clique aqui para ver o pipeline do GitHub Actions](.github/workflows/).
+[Clique aqui para ver o pipeline do GitHub Actions](.github/workflows/ci-cd.yml).
+1. **Config_Azure**: Cria o ACR e o Ambiente containers caso necessário.
+2. **Package**: Constrói o pacote java.
+3. **Image_Build**: Cria imagem Docker e envia para o ACR.
+4. **Deploy**: Faz o deploy no Azure Container Apps.
+5. **Cleanup**: Remove todos os recursos criados manualmente para evitar exclusão acidental.
 
 ---
 

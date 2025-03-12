@@ -1,0 +1,188 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+env:
+  AZURE_RESOURCE_GROUP: "zelabs"
+  AZURE_LOCATION: "brazilsouth"
+  AZURE_ACR_NAME: "zelabs"
+  AZURE_ENVIRONMENT: "zelabs"
+  IMAGE_NAME: ${{ github.event.repository.name }}
+
+jobs:
+  config_azure:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    steps:
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+        enable-AzPSSession: true
+    
+    - name: Check and create ACR
+      uses: azure/cli@v2
+      with:
+        azcliversion: latest
+        inlineScript: |
+          echo "Verificando se o ACR existe..."
+          if az acr show --name "$AZURE_ACR_NAME" --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
+            echo "ACR $AZURE_ACR_NAME já existe."
+            echo "Image name: $IMAGE_NAME"
+            echo "Image Tag: $IMAGE_TAG"
+          else
+            echo "ACR $AZURE_ACR_NAME não existe. Criando..."
+            az acr create --name "$AZURE_ACR_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --sku "basic"
+            az acr update -n $AZURE_ACR_NAME --admin-enabled true
+          fi
+
+    - name: Check and create Container Environment
+      uses: azure/cli@v2
+      with:
+        azcliversion: latest
+        inlineScript: |
+          echo "Verificando se Ambiente de Container existe..."
+          if az containerapp env show --name $AZURE_ENVIRONMENT --resource-group $AZURE_RESOURCE_GROUP --query "name" --output tsv >/dev/null 2>&1; then
+            echo "O ambiente $AZURE_ENVIRONMENT já existe."
+          else
+            echo "Criando o ambiente $AZURE_ENVIRONMENT..."
+            az containerapp env create \
+              --name $AZURE_ENVIRONMENT \
+              --resource-group $AZURE_RESOURCE_GROUP \
+              --location $AZURE_LOCATION
+          fi
+
+  package:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: config_azure
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Config Setup Java  
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Creating package
+        run: ./mvnw clean package
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Package
+          path: target/*.jar
+
+  image_build:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: [package]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Package
+          path: target/
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          enable-AzPSSession: true
+      - name: Login to ACR
+        run: az acr login --name $AZURE_ACR_NAME
+      - name: Extract short SHA
+        run: echo "IMAGE_TAG=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ env.AZURE_ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: image_build
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          enable-AzPSSession: true
+      - name: Extract short SHA
+        run: echo "IMAGE_TAG=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
+
+      - name: Deploy to Azure Container App
+        run: |
+          ACR_CREDENTIALS=$(az acr credential show -n $AZURE_ACR_NAME --query "[username,passwords[0].value]" -o tsv)
+          ACR_USERNAME=$(echo $ACR_CREDENTIALS | awk '{print $1}')
+          ACR_PASSWORD=$(echo $ACR_CREDENTIALS | awk '{print $2}')
+
+          echo "Verificando se o Container App já existe..."
+          if az containerapp show -n ${{ github.event.repository.name }} -g $AZURE_RESOURCE_GROUP --query "name" --output tsv >/dev/null 2>&1; then
+            echo "Atualizando Container App ${{ github.event.repository.name }}..."
+            az containerapp update -n ${{ github.event.repository.name }} -g $AZURE_RESOURCE_GROUP \
+              --image $AZURE_ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG
+          else
+            echo "Criando Container App ${{ github.event.repository.name }}..."
+            az containerapp create -n ${{ github.event.repository.name }} -g $AZURE_RESOURCE_GROUP \
+              --image $AZURE_ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG --environment $AZURE_ENVIRONMENT \
+              --ingress external --target-port 8080 \
+              --registry-server $AZURE_ACR_NAME.azurecr.io \
+              --registry-username $ACR_USERNAME \
+              --registry-password $ACR_PASSWORD \
+              --cpu 0.25 --memory 0.5Gi \
+              --min-replicas 1 --max-replicas 4
+          fi
+
+  cleanup:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          enable-AzPSSession: true
+
+      - name: Cleanup Container App
+        run: |
+          if az containerapp show -n ${{ github.event.repository.name }} -g $AZURE_RESOURCE_GROUP --query "name" --output tsv >/dev/null 2>&1; then
+            az containerapp delete -n ${{ github.event.repository.name }} -g $AZURE_RESOURCE_GROUP --yes
+            echo "Container App ${{ github.event.repository.name }} removido."
+          else
+            echo "Container App ${{ github.event.repository.name }} não existe."
+          fi
+      - name: Cleanup Container App Environment
+        run: |
+          if az containerapp env show -n $AZURE_ENVIRONMENT -g $AZURE_RESOURCE_GROUP --query "name" --output tsv >/dev/null 2>&1; then
+            az containerapp env delete -n $AZURE_ENVIRONMENT -g $AZURE_RESOURCE_GROUP --yes
+            echo "Container App Environment $AZURE_ENVIRONMENT removed."
+          else
+            echo "Container App Environment $AZURE_ENVIRONMENT does not exist."
+          fi
+      - name: Cleanup Azure Container Registry (ACR)
+        run: |
+          if az acr show -n $AZURE_ACR_NAME -g $AZURE_RESOURCE_GROUP --query "name" --output tsv >/dev/null 2>&1; then
+            az acr delete -n $AZURE_ACR_NAME -g $AZURE_RESOURCE_GROUP --yes
+            echo "ACR $AZURE_ACR_NAME removed."
+          else
+            echo "ACR $AZURE_ACR_NAME does not exist."
+          fi
+      - name: Cleanup others resources in Resource Group
+        run: |
+          # List all recurses on resource group
+          resources=$(az resource list --resource-group zelabs --query "[].id" -o tsv)
+
+          # Cleanup all recurses
+          for resource in $resources; do
+            az resource delete --ids $resource
+          done
