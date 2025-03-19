@@ -1,0 +1,162 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  AZURE_RESOURCE_GROUP: "zelabs"
+  AZURE_LOCATION: "brazilsouth"
+  AZURE_ACR_NAME: "zelabs"
+  AZURE_ENVIRONMENT: "zelabs"
+  IMAGE_NAME: "$(Build.Repository.Name)"
+
+stages:
+  - stage: cleanup
+    trigger: manual
+    jobs:
+      - job: cleanup
+        steps:
+          - task: AzureCLI@2
+            displayName: "Cleanup"
+            inputs:
+              azureSubscription: "AZURE_SERVICE_CONNECTION"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                echo "Removendo Container App..."
+                if az containerapp show -n "$(Build.Repository.Name)" -g "$(AZURE_RESOURCE_GROUP)" --query "name" --output tsv >/dev/null 2>&1; then
+                  az containerapp delete -n "$(Build.Repository.Name)" -g "$(AZURE_RESOURCE_GROUP)" --yes
+                else
+                  echo "Nenhum Container App encontrado!"
+                fi
+
+                echo "Removendo Container App Environment..."
+                if az containerapp env show -n "$(AZURE_ENVIRONMENT)" -g "$(AZURE_RESOURCE_GROUP)" --query "name" --output tsv >/dev/null 2>&1; then
+                  az containerapp env delete -n "$(AZURE_ENVIRONMENT)" -g "$(AZURE_RESOURCE_GROUP)" --yes
+                else
+                  echo "Nenhum Container App Environment encontrado!"
+                fi
+                
+                echo "Removendo Log Analytics Workspace..."
+                WORKSPACE_ID=$(az monitor log-analytics workspace list --resource-group "$(AZURE_RESOURCE_GROUP)" --query "[?contains(name, '$(AZURE_ENVIRONMENT)')].id" --output tsv)
+                
+                if [[ -n "$WORKSPACE_ID" ]]; then
+                  az monitor log-analytics workspace delete --ids "$WORKSPACE_ID" --yes
+                  echo "Log Analytics Workspace removido com sucesso."
+                else
+                  echo "Nenhum Log Analytics Workspace encontrado!"
+                fi
+                
+  - stage: setup
+    dependsOn: 
+    jobs:
+      - job: config_azure
+        steps:
+          - task: AzureCLI@2
+            displayName: "Azure Config"
+            inputs:
+              azureSubscription: "AZURE_SERVICE_CONNECTION"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                echo "Checking if ACR exists..."
+                if az acr show --name "$(AZURE_ACR_NAME)" --resource-group "$(AZURE_RESOURCE_GROUP)" >/dev/null 2>&1; then
+                  echo "ACR already exists."
+                else
+                  echo "Creating ACR..."
+                  az acr create --name "$(AZURE_ACR_NAME)" --resource-group "$(AZURE_RESOURCE_GROUP)" --sku "Basic"
+                  az acr update -n "$(AZURE_ACR_NAME)" --admin-enabled true
+                fi
+
+                echo "Checking if Container Environment Exists..."
+                if az containerapp env show --name "$(AZURE_ENVIRONMENT)" --resource-group "$(AZURE_RESOURCE_GROUP)" >/dev/null 2>&1; then
+                  echo "Container Environmen Exists."
+                else
+                  echo "Creating Container Environment..."
+                  az containerapp env create --name "$(AZURE_ENVIRONMENT)" --resource-group "$(AZURE_RESOURCE_GROUP)" --location "$(AZURE_LOCATION)"
+                fi
+
+  - stage: build
+    dependsOn: setup
+    jobs:
+      - job: package
+        steps:
+          - task: Maven@4
+            inputs:
+              mavenPomFile: 'pom.xml'
+              mavenOptions: '-Xmx3072m'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '21'
+              jdkArchitectureOption: 'x64'
+              publishJUnitResults: true
+              testResultsFiles: '**/TEST-*.xml'
+              goals: 'package'
+          - task: PublishBuildArtifacts@1
+            displayName: "Push Artefact"
+            inputs:
+              pathToPublish: "target/"
+              artifactName: "target"
+
+  - stage: deploy
+    dependsOn: build
+    jobs:
+      - job: image_build
+        steps:
+          - task: DownloadBuildArtifacts@1
+            displayName: "Pull Artefact"
+            inputs:
+              buildType: 'current'
+              artifactName: 'target'
+              downloadPath: '.'
+          - script: |
+              SHORT_SHA=$(echo "$(Build.SourceVersion)" | cut -c1-7)
+              echo "##vso[task.setvariable variable=IMAGE_TAG]$SHORT_SHA"
+              echo "Short SHA: $SHORT_SHA"
+            displayName: "Extract Short SHA"
+
+          - task: Docker@2
+            displayName: "Image Build/Push"
+            inputs:
+              command: "buildAndPush"
+              repository: "$(IMAGE_NAME)"
+              dockerfile: "Dockerfile"
+              containerRegistry: "AZURE_DOCKER_CONNECTION"
+              tags: "$(IMAGE_TAG)"
+
+      - job: deploy
+        dependsOn: image_build
+        steps:
+          - task: AzureCLI@2
+            displayName: "deploy"
+            inputs:
+              azureSubscription: "AZURE_SERVICE_CONNECTION"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                IMAGE_TAG=$(echo "$(Build.SourceVersion)" | cut -c1-7)
+                echo "IMAGE_TAG= $IMAGE_TAG"
+                
+                ACR_CREDENTIALS=$(az acr credential show -n $(AZURE_ACR_NAME) --query "[username,passwords[0].value]" -o tsv)
+                ACR_USERNAME=$(echo $ACR_CREDENTIALS | awk '{print $1}')
+                ACR_PASSWORD=$(echo $ACR_CREDENTIALS | awk '{print $2}')
+                az acr repository show-tags -n $(AZURE_ACR_NAME) --repository $(IMAGE_NAME) --output table
+
+                echo "Checking if Container APP Exists..."
+                if az containerapp show -n "$(Build.Repository.Name)" -g "$(AZURE_RESOURCE_GROUP)" --query "name" --output tsv >/dev/null 2>&1; then
+                  echo "Updating Container App..."
+                  az containerapp update -n "$(Build.Repository.Name)" -g "$(AZURE_RESOURCE_GROUP)" \
+                    --image $(AZURE_ACR_NAME).azurecr.io/$(IMAGE_NAME):$IMAGE_TAG
+                else
+                  echo "Creating new Container App..."
+                  az containerapp create -n "$(Build.Repository.Name)" -g "$(AZURE_RESOURCE_GROUP)" \
+                    --image $(AZURE_ACR_NAME).azurecr.io/$(IMAGE_NAME):$IMAGE_TAG --environment $(AZURE_ENVIRONMENT) \
+                    --ingress external --target-port 8080 \
+                    --registry-server $(AZURE_ACR_NAME).azurecr.io \
+                    --registry-username $ACR_USERNAME \
+                    --registry-password $ACR_PASSWORD \
+                    --cpu 0.25 --memory 0.5Gi \
+                    --min-replicas 1 --max-replicas 4
+                fi
