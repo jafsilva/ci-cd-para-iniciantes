@@ -1,6 +1,6 @@
 # Pipeline CI/CD para Iniciantes em DevOps
 
-Projeto para o artigo: [DevOps e CI/CD: Por Onde Começar? Um Guia para Iniciantes](linkedin.com/posts/jafsilva_devops-cicd-gitlab-activity-7299777211274792960-LfXT)
+Projeto para o artigo: [DevOps e CI/CD: Por Onde Começar? Um Guia para Iniciantes](https://www.linkedin.com/pulse/devops-e-cicd-por-onde-come%C3%A7ar-um-guia-para-f-da-silva-niidf)
 
 Este projeto tem como objetivo ajudar profissionais iniciantes em DevOps a entender e implementar pipelines de CI/CD (Integração Contínua e Entrega Contínua) utilizando três ferramentas populares: **GitLab CI**, **GitHub Actions** e **Azure DevOps**. O deploy será realizado no **Azure Container Apps**, um serviço gerenciado para executar contêineres no Azure.
 
@@ -153,26 +153,26 @@ O pipeline do GitLab CI está configurado no arquivo `.gitlab-ci.yml`. Ele reali
 ---
 
 ### GitHub Actions
-- Laboratório em andamento...
 
-[Clique aqui para ver o pipeline do GitHub Actions](.github/workflows/ci-cd.yml).
 1. **Config_Azure**: Cria o ACR e o Ambiente containers caso necessário.
 2. **Package**: Constrói o pacote java.
 3. **Image_Build**: Cria imagem Docker e envia para o ACR.
 4. **Deploy**: Faz o deploy no Azure Container Apps.
 5. **Cleanup**: Remove todos os recursos criados manualmente para evitar exclusão acidental.
+
+[Clique aqui para ver o pipeline do GitHub Actions](.github/workflows/ci-cd.yml).
 
 ---
 
 ### Azure DevOps
-- Laboratório em andamento...
 
-[Clique aqui para ver o pipeline do Azure DevOps](azure-pipelines.yml).
 1. **Config_Azure**: Cria o ACR e o Ambiente containers caso necessário.
 2. **Package**: Constrói o pacote java.
 3. **Image_Build**: Cria imagem Docker e envia para o ACR.
 4. **Deploy**: Faz o deploy no Azure Container Apps.
 5. **Cleanup**: Remove todos os recursos criados manualmente para evitar exclusão acidental.
+
+[Clique aqui para ver o pipeline do Azure DevOps](azure-pipelines.yml).
 
 ---
 
