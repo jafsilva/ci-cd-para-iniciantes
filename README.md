@@ -1,6 +1,6 @@
 # Pipeline CI/CD para Iniciantes em DevOps
 
-Projeto para o artigo: linkedin.com/posts/jafsilva_devops-cicd-gitlab-activity-7299777211274792960-LfXT
+Projeto para o artigo: [DevOps e CI/CD: Por Onde Começar? Um Guia para Iniciantes](https://www.linkedin.com/pulse/devops-e-cicd-por-onde-come%C3%A7ar-um-guia-para-f-da-silva-niidf)
 
 Este projeto tem como objetivo ajudar profissionais iniciantes em DevOps a entender e implementar pipelines de CI/CD (Integração Contínua e Entrega Contínua) utilizando três ferramentas populares: **GitLab CI**, **GitHub Actions** e **Azure DevOps**. O deploy será realizado no **Azure Container Apps**, um serviço gerenciado para executar contêineres no Azure.
 
@@ -54,19 +54,23 @@ Antes de começar, certifique-se de ter o seguinte:
 Segue script para configurar o ambiente Azure(Necessário Azure CLI instalado):
 
 ```bash
-export AZURE_RESOURCE_GROUP="zelabs"
+export GROUP_NAME="zelabs"
 
 # Login na Azure com user root
 az login 
 
 # Cria o Resource Group
-az group create --name $AZURE_RESOURCE_GROUP --location "brazilsouth"
+az group create --name $GROUP_NAME --location "brazilsouth"
 
 # Cria o App Registration
-az ad app create --display-name "zelabs"
+az ad app create --display-name "$GROUP_NAME"
+
+#Cria Container Registry - ACR
+az acr create --name "$GROUP_NAME" --resource-group "$GROUP_NAME" --sku "Basic"
+az acr update -n "$GROUP_NAME" --admin-enabled true
 
 # Obtém o Client ID
-AZURE_CLIENT_ID=$(az ad app list --display-name "zelabs" --query "[].appId" -o tsv)
+AZURE_CLIENT_ID=$(az ad app list --display-name "$GROUP_NAME" --query "[].appId" -o tsv)
 
 # Gera a Client Secret e armazena na variável AZURE_CLIENT_SECRET
 AZURE_CLIENT_SECRET=$(az ad app credential reset --id $AZURE_CLIENT_ID --query "password" -o tsv)
@@ -81,14 +85,15 @@ AZURE_SUBSCRIPTION_ID=$(az account show --query "id" -o tsv)
 az ad sp create --id $AZURE_CLIENT_ID
 
 # Atribui a permissão de Contributor ao App Registration no Resource Group
-az role assignment create --assignee $AZURE_CLIENT_ID --role "Contributor" --scope /subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP
+az role assignment create --assignee $AZURE_CLIENT_ID --role "Contributor" --scope /subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$GROUP_NAME
 
 # Exibe os valores
-echo "Resource Group: $AZURE_RESOURCE_GROUP"
+echo "Resource Group: $GROUP_NAME"
+echo "Container Registry - ACR: $GROUP_NAME "
+echo "Subscription ID: $AZURE_SUBSCRIPTION_ID"
 echo "Client ID: $AZURE_CLIENT_ID"
 echo "Client Secret: $AZURE_CLIENT_SECRET"
 echo "Tenant ID: $AZURE_TENANT_ID"
-echo "Subscription ID: $AZURE_SUBSCRIPTION_ID"
 ```
 ---
 
@@ -113,7 +118,7 @@ Necessário configurar essas variáveis de ambiente diretamente nas ferramentas(
 ```
 
 #### **Azure DevOps**
-- Laboratório em andamento...
+- Configurar Service Connections de acordo com o artigo publicado: [Azure DevOps na Prática](https://www.linkedin.com/pulse/azure-devops-na-pr%C3%A1tica-implementando-um-pipeline-jos%C3%A9-aparecido-rlfnf)
 
 ---
 
@@ -148,19 +153,24 @@ O pipeline do GitLab CI está configurado no arquivo `.gitlab-ci.yml`. Ele reali
 ---
 
 ### GitHub Actions
-- Laboratório em andamento...
 
-[Clique aqui para ver o pipeline do GitHub Actions](.github/workflows/ci-cd.yml).
 1. **Config_Azure**: Cria o ACR e o Ambiente containers caso necessário.
 2. **Package**: Constrói o pacote java.
 3. **Image_Build**: Cria imagem Docker e envia para o ACR.
 4. **Deploy**: Faz o deploy no Azure Container Apps.
 5. **Cleanup**: Remove todos os recursos criados manualmente para evitar exclusão acidental.
 
+[Clique aqui para ver o pipeline do GitHub Actions](.github/workflows/ci-cd.yml).
+
 ---
 
 ### Azure DevOps
-- Laboratório em andamento...
+
+1. **Config_Azure**: Cria o ACR e o Ambiente containers caso necessário.
+2. **Package**: Constrói o pacote java.
+3. **Image_Build**: Cria imagem Docker e envia para o ACR.
+4. **Deploy**: Faz o deploy no Azure Container Apps.
+5. **Cleanup**: Remove todos os recursos criados manualmente para evitar exclusão acidental.
 
 [Clique aqui para ver o pipeline do Azure DevOps](azure-pipelines.yml).
 
